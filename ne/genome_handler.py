@@ -5,6 +5,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Activation, Dense, Dropout, Flatten
 from tensorflow.keras.layers import Convolution2D, MaxPooling2D, UpSampling2D
 from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras import Input,Model
 import tensorflow as tf
 
 
@@ -115,6 +116,8 @@ class GenomeHandler:
     def decode(self, genome):
         if not self.is_compatible_genome(genome):
             raise ValueError("Invalid genome for specified configs")
+        inputs = Input(shape=self.input_shape)
+        x = None
         model = Sequential()
         dim = 0
         offset = 0
@@ -132,26 +135,25 @@ class GenomeHandler:
                 if input_layer:
                     temp_features = genome[offset + 1]
                     temp_kernel = genome[offset + 2]
-                    convolution = Convolution2D(
+                    x =  Convolution2D(
                         temp_features, (temp_kernel, temp_kernel),
                         padding='same',
                         input_shape=self.input_shape
-                    )
+                    )(inputs)
                     input_layer = False
                 else:
                     temp_features = int(min(features[list(features.keys())[-1]],genome[offset + 1]))
                     temp_kernel = genome[offset + 2]
-                    convolution = Convolution2D(
+                    x = Convolution2D(
                         temp_features, (temp_kernel, temp_kernel),
                         padding='same'
-                    )
-                model.add(convolution)
+                    )(x)
                 if genome[offset + 3]:
-                    model.add(BatchNormalization())
-                model.add(Activation(self.activation[genome[offset + 4]]))
+                    x = BatchNormalization()(x)
+                x = Activation(self.activation[genome[offset + 4]])(x)
                 max_pooling_type = genome[offset + 6]
                 if max_pooling_type == 1 and dim >= 3:
-                    model.add(MaxPooling2D(pool_size=(2, 2), padding="same"))
+                    x = MaxPooling2D(pool_size=(2, 2), padding="same")(x)
                     dim /= 2
             dims.append(dim)
             features[i] = temp_features
@@ -160,36 +162,115 @@ class GenomeHandler:
                 offset += self.convolution_layer_size
             else:
                 optim_offset = offset + self.convolution_layer_size
-        level_of_compression = np.prod(model.layers[-1].output_shape[1:])
+        level_of_compression = np.prod(x.get_shape()[1:])
         level_of_compression = min(math.log(level_of_compression,10),5)
-        model.add(Convolution2D(temp_features,(3,3),padding='same'))
+        x = Convolution2D(temp_features,(3,3),padding='same')(x)
         needed_reductions = [i-2 for i,temp_dim in enumerate(dims) if(math.ceil(temp_dim)!=math.floor(temp_dim))]
         #Reset the offset
         for i in reversed(range(self.convolution_layers)):
             #Done to fix shape when 14->7-> 4 => 4->8->16->14
             if(not(dim in dims) and ((dim-2)*2 in dims or (not(dim*2 in dims) and (dim-2)*2==min(self.input_shape[:-1])))):
-                model.add(Convolution2D(features[i],(3,3)))
+                x = Convolution2D(features[i],(3,3))(x)
                 dim-=2
             if genome[offset]:
                 max_pooling_type = genome[offset + 6]
-                convolution = Convolution2D(
+                x = Convolution2D(
                     features[i], (genome[offset+2], genome[offset+2]),
                     padding='same'
-                )
-                model.add(convolution)
-                model.add(Activation(self.activation[genome[offset + 4]]))
+                )(x)
+                x = Activation(self.activation[genome[offset + 4]])(x)
                 if ((dim*2 in dims or (dim*2)-2 in dims or (dim*4)-2 or dim==(int(min(self.input_shape[:-1]))/2)) and dim<min(self.input_shape[:-1])):
-                    model.add(UpSampling2D((2, 2)))
+                    x = UpSampling2D((2, 2))(x)
                     dim*=2
             if(dim>max(self.input_shape)):
                 import pdb
                 pdb.set_trace()
             offset -= self.convolution_layer_size
-        model.add(Convolution2D(self.input_shape[-1], (genome[2],genome[2]), activation=self.activation[genome[4]], padding='same'))
+        x = Convolution2D(self.input_shape[-1], (genome[2],genome[2]), activation=self.activation[genome[4]], padding='same')(x)
+        model = Model(inputs, x)
         model.compile(loss='binary_crossentropy',
                       optimizer=self.optimizer[genome[optim_offset]],
                       metrics=["accuracy"])
+        print(model.summary())
         return model,level_of_compression
+    # def decode(self, genome):
+    #     if not self.is_compatible_genome(genome):
+    #         raise ValueError("Invalid genome for specified configs")
+    #     model = Sequential()
+    #     dim = 0
+    #     offset = 0
+    #     optim_offset = 0
+    #     if self.convolution_layers > 0:
+    #         dim = min(self.input_shape[:-1])  # keep track of smallest dimension
+    #     input_layer = True
+    #     dims = []
+    #     lays = []
+    #     temp_features = 0
+    #     features = dict()
+    #     for i in range(self.convolution_layers):
+    #         if genome[offset]:
+    #             convolution = None
+    #             if input_layer:
+    #                 temp_features = genome[offset + 1]
+    #                 temp_kernel = genome[offset + 2]
+    #                 convolution = Convolution2D(
+    #                     temp_features, (temp_kernel, temp_kernel),
+    #                     padding='same',
+    #                     input_shape=self.input_shape
+    #                 )
+    #                 input_layer = False
+    #             else:
+    #                 temp_features = int(min(features[list(features.keys())[-1]],genome[offset + 1]))
+    #                 temp_kernel = genome[offset + 2]
+    #                 convolution = Convolution2D(
+    #                     temp_features, (temp_kernel, temp_kernel),
+    #                     padding='same'
+    #                 )
+    #             model.add(convolution)
+    #             if genome[offset + 3]:
+    #                 model.add(BatchNormalization())
+    #             model.add(Activation(self.activation[genome[offset + 4]]))
+    #             max_pooling_type = genome[offset + 6]
+    #             if max_pooling_type == 1 and dim >= 3:
+    #                 model.add(MaxPooling2D(pool_size=(2, 2), padding="same"))
+    #                 dim /= 2
+    #         dims.append(dim)
+    #         features[i] = temp_features
+    #         dim = int(math.ceil(dim))
+    #         if(i<self.convolution_layers-1):
+    #             offset += self.convolution_layer_size
+    #         else:
+    #             optim_offset = offset + self.convolution_layer_size
+    #     level_of_compression = np.prod(model.layers[-1].output_shape[1:])
+    #     level_of_compression = min(math.log(level_of_compression,10),5)
+    #     model.add(Convolution2D(temp_features,(3,3),padding='same'))
+    #     needed_reductions = [i-2 for i,temp_dim in enumerate(dims) if(math.ceil(temp_dim)!=math.floor(temp_dim))]
+    #     #Reset the offset
+    #     for i in reversed(range(self.convolution_layers)):
+    #         #Done to fix shape when 14->7-> 4 => 4->8->16->14
+    #         if(not(dim in dims) and ((dim-2)*2 in dims or (not(dim*2 in dims) and (dim-2)*2==min(self.input_shape[:-1])))):
+    #             model.add(Convolution2D(features[i],(3,3)))
+    #             dim-=2
+    #         if genome[offset]:
+    #             max_pooling_type = genome[offset + 6]
+    #             convolution = Convolution2D(
+    #                 features[i], (genome[offset+2], genome[offset+2]),
+    #                 padding='same'
+    #             )
+    #             model.add(convolution)
+    #             model.add(Activation(self.activation[genome[offset + 4]]))
+    #             if ((dim*2 in dims or (dim*2)-2 in dims or (dim*4)-2 or dim==(int(min(self.input_shape[:-1]))/2)) and dim<min(self.input_shape[:-1])):
+    #                 model.add(UpSampling2D((2, 2)))
+    #                 dim*=2
+    #         if(dim>max(self.input_shape)):
+    #             import pdb
+    #             pdb.set_trace()
+    #         offset -= self.convolution_layer_size
+    #     model.add(Convolution2D(self.input_shape[-1], (genome[2],genome[2]), activation=self.activation[genome[4]], padding='same'))
+    #     model.compile(loss='binary_crossentropy',
+    #                   optimizer=self.optimizer[genome[optim_offset]],
+    #                   metrics=["accuracy"])
+    #     return model,level_of_compression
 
     def genome_representation(self):
         encoding = []

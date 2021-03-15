@@ -76,7 +76,7 @@ elif(DATASET=='oxford_pets'):
   target_dir = "../data/ss/annotations/trimaps/"
   img_size = (160, 160)
   num_classes = 3
-  batch_size = 128
+  batch_size = 64
   from oxford_pets import OxfordPets,get_img_paths
   input_img_paths,target_img_paths = get_img_paths(input_dir,target_dir)
   print("Number of samples:", len(input_img_paths))   
@@ -109,7 +109,7 @@ if(not TRAIN_WITH_GEN):
 
 def calculate_contrib_hvi(objectives):
     hv = pygmo.hypervolume(objectives) 
-    reference_points = [10,10]
+    reference_points = [10,10,10]
     hv.compute(reference_points)
     return hv.contributions(reference_points)
 

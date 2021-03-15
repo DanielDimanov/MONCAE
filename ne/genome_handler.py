@@ -127,6 +127,7 @@ class GenomeHandler:
         input_layer = True
         dims = []
         lays = []
+        gateways = []
         temp_features = 0
         features = dict()
         for i in range(self.convolution_layers):
@@ -157,13 +158,16 @@ class GenomeHandler:
                     dim /= 2
             dims.append(dim)
             features[i] = temp_features
+            if(dim!=dims[-1] or i==0):
+                gateways.append((dim,x))
             dim = int(math.ceil(dim))
             if(i<self.convolution_layers-1):
                 offset += self.convolution_layer_size
             else:
                 optim_offset = offset + self.convolution_layer_size
         level_of_compression = np.prod(x.get_shape()[1:])
-        level_of_compression = min(math.log(level_of_compression,10),5)
+        #level_of_compression is limited to 10 instead of 5 in the original MONCAE paper!
+        level_of_compression = min(math.log(level_of_compression,10),10)
         x = Convolution2D(temp_features,(3,3),padding='same')(x)
         needed_reductions = [i-2 for i,temp_dim in enumerate(dims) if(math.ceil(temp_dim)!=math.floor(temp_dim))]
         #Reset the offset
@@ -191,8 +195,8 @@ class GenomeHandler:
         model.compile(loss='binary_crossentropy',
                       optimizer=self.optimizer[genome[optim_offset]],
                       metrics=["accuracy"])
-        print(model.summary())
-        return model,level_of_compression
+        level_of_complexity = min(math.log(int(model.count_params()),10),10)
+        return model,level_of_compression,level_of_complexity
     # def decode(self, genome):
     #     if not self.is_compatible_genome(genome):
     #         raise ValueError("Invalid genome for specified configs")

@@ -64,6 +64,7 @@ class Devol_based_NE:
         self.datafile = data_path or (datetime.now().isoformat()[:-10] + '.csv')
         self._indivual_id = 0
         self._bssf = -1
+        self.train_with_gen = False
 
     def set_objective(self, metric):
         """
@@ -84,7 +85,7 @@ class Devol_based_NE:
         self._metric_op = METRIC_OPS[self._objective == 'max']
         self._metric_objective = METRIC_OBJECTIVES[self._objective == 'max']
 
-    def run(self, dataset, num_generations, pop_size, epochs, fitness=None,
+    def run(self, dataset, num_generations, pop_size, epochs, fitness=None, train_with_gen=False,
             metric='loss'):
         """
         Run genetic search on dataset given number of generations and
@@ -108,20 +109,24 @@ class Devol_based_NE:
             keras model: best model found with weights
         """
         import time
+        if(train_with_gen):
+            self.train_with_gen = True
+            self.train_gen,self.val_gen = dataset
         generation_times = []
         generation_performances = []
         generation_members = []
         time_global_start = time.time()
         self.set_objective(metric)
         # If no validation data is given set it to None
-        if len(dataset) == 2:
-            (self.x_train, self.y_train), (self.x_test, self.y_test) = dataset
-            self.x_val = None
-            self.y_val = None
-        else:
-            (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = dataset
-        self.x_train_full = self.x_train.copy()
-        self.y_train_full = self.y_train.copy()
+        if(not self.train_with_gen):
+            if len(dataset) == 2:
+                (self.x_train, self.y_train), (self.x_test, self.y_test) = dataset
+                self.x_val = None
+                self.y_val = None
+            else:
+                (self.x_train, self.y_train), (self.x_test, self.y_test), (self.x_val, self.y_val) = dataset
+            self.x_train_full = self.x_train.copy()
+            self.y_train_full = self.y_train.copy()
         time_start = time.time()
         # generate and evaluate initial population
         members = self._generate_random_population(pop_size)
@@ -169,37 +174,42 @@ class Devol_based_NE:
     
     def _evaluate(self, genome, epochs, igen, ngen):
         try:
-            model,level_of_compression = self.genome_handler.decode(genome)
+            model,level_of_compression,level_of_complexity = self.genome_handler.decode(genome)
         except Exception as e:
             print(e)
-        model,level_of_compression = self.genome_handler.decode(genome)
+        model,level_of_compression,level_of_complexity = self.genome_handler.decode(genome)
         loss, accuracy = None, None
         performance = []
-        fit_params = {
-            'x': self.x_train_full,
-            'y': self.y_train_full,
-            'validation_split': 0.1,
-            'batch_size':self.batch_size,
-            'shuffle':True,
-            'steps_per_epoch': int(len(self.x_train_full)/self.batch_size),
-            'epochs': epochs,
-            'verbose': 0,
-            'callbacks': [
+        callbacks = [
                 EarlyStopping(monitor='val_loss', patience=1, verbose=0)
             ]
-        }
-
-        if self.x_val is not None:
-            fit_params['validation_data'] = (self.x_val, self.y_val)
+        if(not self.train_with_gen):
+            fit_params = {
+                'x': self.x_train_full,
+                'y': self.y_train_full,
+                'validation_split': 0.1,
+                'batch_size':self.batch_size,
+                'shuffle':True,
+                'steps_per_epoch': int(len(self.x_train_full)/self.batch_size),
+                'epochs': epochs,
+                'verbose': 0,
+                'callbacks': callbacks
+            }
+            if self.x_val is not None:
+                fit_params['validation_data'] = (self.x_val, self.y_val)
         try:
-            history = model.fit(**fit_params)
-            performance = model.evaluate(self.x_test, self.y_test, verbose=0)
+            if(self.train_with_gen):
+                history = model.fit(self.train_gen,epochs=epochs, validation_data=self.val_gen, callbacks=callbacks, verbose=0)
+                performance = model.evaluate(self.val_gen, verbose=0)
+            else:
+                history = model.fit(**fit_params)
+                performance = model.evaluate(self.x_test, self.y_test, verbose=0)
         except Exception as e:
             performance = self._handle_broken_model(model, e)
 
         if(igen+1==ngen):
             self._record_model(model,genome,performance)
-        return model, performance , level_of_compression
+        return model, performance , level_of_compression, level_of_complexity
 
     def _record_model(self,model,genome,performance):
         try:
@@ -238,9 +248,10 @@ class Devol_based_NE:
                 res = self._evaluate(mem, epochs,igen,ngen)
             else:
                 raise Exception('No valid evaluation method specified')
-            #KEY loss capped at 4
-            v = min(res[1][self._metric_index],4)
-            objectives.append((v,res[2]))
+            #KEY loss capped at !4! temporary change to 10 TODO add as variable!!!!
+            v = min(res[1][self._metric_index],10)
+            #Added level_of_complexity NOT in the original MONCAE paper!
+            objectives.append((v,res[2],res[3]))
             del res
             fit.append(v)
 

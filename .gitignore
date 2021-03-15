@@ -1,0 +1,12 @@
+.ropeproject
+__pycache__
+*.pyc
+*.csv
+.ipynb_checkpoints
+backup*
+*.pkl
+*.h5
+data/*
+kagglecatsanddogs_3367a.zip
+PetImages/*
+Experiments/*
